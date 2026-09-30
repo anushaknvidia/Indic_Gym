@@ -6,6 +6,11 @@ and Arena Hard's inference-hub judge, `gcp/google/gemini-3.8-flash`.
 Generation, model serving, retries, artifacts, aggregation, and Slurm submission
 use Gym's existing infrastructure.
 
+The benchmark lives in `benchmarks/indic/biggenbench`; the reusable verifier lives
+in `resources_servers/biggenbench`. Judge messages use Gym's cached YAML prompt
+loader and renderer, and requests use `call_judge` through the OpenAI model server.
+The single-turn agent and environment adapter are Gym's standard components.
+
 ## Prepare
 
 Defaults select `bn gu hi kn mr ml ne or pa ta te ur`; aliases `ka`, `mar`, and
@@ -19,10 +24,10 @@ user messages are sent to the policy model.
 
 ```bash
 # Uses pinned Hugging Face revisions and standard HF authentication/cache.
-gym eval prepare --benchmark indic_biggenbench
+gym eval prepare --benchmark indic/biggenbench
 
 # Offline alternative using downloaded dataset repositories/parquet.
-python -m benchmarks.indic_biggenbench.prepare \
+python -m benchmarks.indic.biggenbench.prepare \
   --dataset-dir /path/to/indic_biggenbench \
   --upstream-file /path/to/original_biggenbench.parquet
 ```
@@ -39,7 +44,7 @@ through an OpenAI-compatible endpoint. The `validation` split is the 12-language
 smoke; use `--split benchmark` for the complete evaluation.
 
 ```bash
-gym eval run --benchmark indic_biggenbench --split validation \
+gym eval run --benchmark indic/biggenbench --split validation \
   --model-type vllm_model --output results/indic_biggenbench_smoke.jsonl \
   +policy_model_name=google/gemma-4-31B-it \
   +policy_base_url=http://localhost:8000/v1 +policy_api_key=dummy \
@@ -56,7 +61,7 @@ the tested two-H100 Gemma setup. Set `SLURM_ACCOUNT`, `BIGGEN_VLLM_CONTAINER`,
 `indic/biggenbench`. `NVIDIA_API_KEY` is forwarded at runtime.
 
 ```bash
-gym eval submit --config benchmarks/indic_biggenbench/gemma_smoke.yaml --dry-run
+gym eval submit --config benchmarks/indic/biggenbench/gemma_smoke.yaml --dry-run
 # Omit --dry-run to submit. Results and logs use Gym's standard job directory.
 ```
 
@@ -81,5 +86,5 @@ tokens, and Gemini low reasoning. This validates the pipeline, not a full model
 baseline; the resource remains `verified: false`.
 
 ```bash
-python -m pytest resources_servers/biggenbench/tests benchmarks/indic_biggenbench/tests
+python -m pytest resources_servers/biggenbench/tests benchmarks/indic/biggenbench/tests
 ```

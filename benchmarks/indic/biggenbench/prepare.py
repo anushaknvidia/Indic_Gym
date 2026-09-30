@@ -16,6 +16,8 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from huggingface_hub import hf_hub_download
 
+from nemo_gym import _resolve_under_cwd_or_install
+
 
 HF_DATASET = "anushakamathofficial/indic_biggenbench"
 HF_REVISION = "9818296bb33a0e196ba085201f9f315dc40b68a4"
@@ -26,7 +28,7 @@ DEFAULT_LANGUAGES = ("bn", "gu", "hi", "kn", "mr", "ml", "ne", "or", "pa", "ta",
 LANGUAGE_ALIASES = {"ka": "kn", "mar": "mr", "mal": "ml"}
 RUBRIC_KEYS = ("criteria", *(f"score{score}_description" for score in range(1, 6)))
 OUTPUT_FPATH = Path(__file__).parent / "data" / "indic_biggenbench_benchmark.jsonl"
-EXAMPLE_FPATH = Path(__file__).resolve().parents[2] / "resources_servers" / "biggenbench" / "data" / "example.jsonl"
+EXAMPLE_FPATH = _resolve_under_cwd_or_install("resources_servers/biggenbench/data/example.jsonl")
 
 
 def _text(row: dict[str, object], key: str, context: str, *, allow_empty: bool = False) -> str:

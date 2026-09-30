@@ -51,11 +51,11 @@ driver:
   benchmarks:
     indic_biggenbench:
       prepare:
-        config_paths: [benchmarks/indic_biggenbench/config.yaml]
+        config_paths: [benchmarks/indic/biggenbench/config.yaml]
         prepare_script_args:
           dataset_dir: ${oc.env:BIGGEN_DATASET_DIR}
       run:
-        config_paths: [benchmarks/indic_biggenbench/config.yaml]
+        config_paths: [benchmarks/indic/biggenbench/config.yaml]
         split: validation
         num_samples_in_parallel: 2
         responses_create_params: {temperature: 0.0, max_output_tokens: 8192}
