@@ -15,16 +15,28 @@
 
 from pathlib import Path
 
+import pytest
 import scripts.update_env_list as update_env_list
 
 
-def test_training_server_info_includes_benchmark_configs(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "benchmark_name, use_agent, expected_display",
+    [
+        ("desktop_bench", True, "Desktop Agent"),
+        ("indic/biggenbench", False, "Indic / Biggenbench"),
+        ("example_suite/nested", False, None),
+        ("suite/example_demo", False, None),
+    ],
+)
+def test_training_server_info_includes_benchmark_configs(
+    tmp_path: Path, monkeypatch, benchmark_name: str, use_agent: bool, expected_display: str | None
+) -> None:
     resources_servers = tmp_path / "resources_servers"
     responses_api_agents = tmp_path / "responses_api_agents"
     benchmarks = tmp_path / "benchmarks"
     resources_servers.mkdir()
     responses_api_agents.mkdir()
-    benchmark_dir = benchmarks / "desktop_bench"
+    benchmark_dir = benchmarks / benchmark_name
     benchmark_dir.mkdir(parents=True)
     agent_dir = responses_api_agents / "desktop_agent" / "configs"
     agent_dir.mkdir(parents=True)
@@ -42,8 +54,7 @@ desktop_agent:
     )
     (benchmark_dir / "config.yaml").write_text(
         f"""
-config_paths:
-  - {agent_config}
+config_paths: [{agent_config if use_agent else ""}]
 
 desktop_agent:
   responses_api_agents:
@@ -64,13 +75,17 @@ desktop_agent:
 
     servers = update_env_list.get_training_server_info()
 
+    if expected_display is None:
+        assert servers == []
+        return
+
     assert len(servers) == 1
     server = servers[0]
-    assert server.name == "desktop_bench"
-    assert server.display_name == "Desktop Agent"
-    assert server.config_path == "benchmarks/desktop_bench/config.yaml"
-    assert server.readme_path == "benchmarks/desktop_bench/README.md"
-    assert server.config_metadata.domain == "agent"
-    assert server.config_metadata.description == "Desktop benchmark"
-    assert server.config_metadata.value == "GUI evaluation"
+    assert server.name == benchmark_name
+    assert server.display_name == expected_display
+    assert server.config_path == f"benchmarks/{benchmark_name}/config.yaml"
+    assert server.readme_path == f"benchmarks/{benchmark_name}/README.md"
+    assert server.config_metadata.domain == ("agent" if use_agent else None)
+    assert server.config_metadata.description == ("Desktop benchmark" if use_agent else None)
+    assert server.config_metadata.value == ("GUI evaluation" if use_agent else None)
     assert server.config_metadata.types == ["validation"]

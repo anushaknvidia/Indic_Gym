@@ -1,4 +1,4 @@
-name: indic_biggenbench
+name: indic/biggenbench
 version: 0.1.0
 experimental: true
 kind: benchmark
@@ -20,12 +20,12 @@ prompt_source: prepared
 datasets:
   - name: indic_biggenbench
     type: benchmark
-    jsonl_fpath: benchmarks/indic_biggenbench/data/indic_biggenbench_benchmark.jsonl
-    prepare_script: benchmarks/indic_biggenbench/prepare.py
+    jsonl_fpath: benchmarks/indic/biggenbench/data/indic_biggenbench_benchmark.jsonl
+    prepare_script: benchmarks/indic/biggenbench/prepare.py
     num_repeats: 1
   - name: smoke
     type: validation
-    jsonl_fpath: benchmarks/indic_biggenbench/data/indic_biggenbench_smoke.jsonl
+    jsonl_fpath: benchmarks/indic/biggenbench/data/indic_biggenbench_smoke.jsonl
     num_repeats: 1
   - name: example
     type: example

@@ -5,32 +5,30 @@
 import asyncio
 import json
 from copy import deepcopy
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from nemo_gym.config_types import AggregateMetricsRequest, ModelServerRef
+from nemo_gym.config_types import AggregateMetricsRequest
 from nemo_gym.judge import judge_failsafe
 from nemo_gym.openai_utils import (
     NeMoGymChatCompletion,
-    NeMoGymChatCompletionCreateParamsNonStreaming,
     NeMoGymResponse,
     NeMoGymResponseCreateParamsNonStreaming,
     NeMoGymResponseOutputMessage,
     NeMoGymResponseOutputRefusal,
     NeMoGymResponseOutputText,
 )
-from nemo_gym.server_utils import ServerClient
+from nemo_gym.prompt import load_prompt_config
 from resources_servers.biggenbench import app as biggenbench_app
 from resources_servers.biggenbench.app import (
-    BigGenBenchResourcesServer,
-    BigGenBenchResourcesServerConfig,
     BigGenBenchVerifyRequest,
-    build_judge_prompt,
+    build_judge_messages,
     parse_score,
     response_text,
     strip_thinking,
 )
+from resources_servers.biggenbench.app import _fixture_server as server
 from resources_servers.biggenbench.task_data import TaskData
 
 
@@ -82,22 +80,6 @@ def request(text: str = "यह यात्रा की योजना है
         ),
         response=make_response(text),
         verifier_metadata=meta,
-    )
-
-
-def server() -> BigGenBenchResourcesServer:
-    return BigGenBenchResourcesServer(
-        config=BigGenBenchResourcesServerConfig(
-            host="0.0.0.0",
-            port=8080,
-            entrypoint="app.py",
-            name="biggenbench",
-            judge_model_server=ModelServerRef(type="responses_api_models", name="judge_model"),
-            judge_chat_completions_create_params=NeMoGymChatCompletionCreateParamsNonStreaming(
-                messages=[], temperature=0.0, max_tokens=16384, reasoning_effort="low"
-            ),
-        ),
-        server_client=MagicMock(spec=ServerClient),
     )
 
 
@@ -184,7 +166,9 @@ def test_reference_rubric_and_system_are_only_in_judge_prompt() -> None:
     body = request("<thinking>private reasoning</thinking>अंतिम उत्तर")
     original = deepcopy(body.model_dump())
     asyncio.run(srv.verify(body))
-    prompt = srv._call_judge.call_args.args[0]
+    messages = srv._call_judge.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "translated into an Indic language" in messages[0]["content"]
     assert body.model_dump() == original
     assert "REFERENCE_ONLY" not in str(body.responses_create_params.input)
     assert "RUBRIC_ONLY" not in str(body.responses_create_params.input)
@@ -198,7 +182,8 @@ def test_reference_rubric_and_system_are_only_in_judge_prompt() -> None:
 
 def test_llm_judge_tasks_keep_embedded_judging_task_delimited() -> None:
     task = TaskData.model_validate(metadata() | {"id": "refinement_llm_judge_1"})
-    prompt = build_judge_prompt(task, "The other model's grading")
+    template = load_prompt_config(server().config.judge_prompt_path)
+    prompt = build_judge_messages(task, "The other model's grading", template)[1]["content"]
     assert "absolute grading of another model's grading" in prompt
     assert f"@@@\n###The instruction to evaluate:\n{task.system_prompt}\n\n{task.input}\n@@@" in prompt
     assert "###Response to evaluate:\nThe other model's grading" in prompt
@@ -308,18 +293,35 @@ def test_call_judge_uses_model_server_chat_endpoint_and_preserves_configuration(
     original = srv.config.judge_chat_completions_create_params.model_dump()
     mock = AsyncMock(return_value=judge_response("<think>reasoning</think>Feedback [RESULT] 4"))
     monkeypatch.setattr(biggenbench_app, "call_judge", mock)
-    feedback, finish_reason = asyncio.run(srv._call_judge("judge input"))
+    messages = [{"role": "system", "content": "Custom judge system"}, {"role": "user", "content": "judge input"}]
+    feedback, finish_reason = asyncio.run(srv._call_judge(messages))
     assert feedback == "<think>reasoning</think>Feedback [RESULT] 4"
     assert finish_reason == "stop"
     assert mock.call_args.args == (srv.server_client,)
     assert mock.call_args.kwargs["server_name"] == "judge_model"
     assert mock.call_args.kwargs["url_path"] == "/v1/chat/completions"
     params = mock.call_args.kwargs["json"]
-    assert params.messages[0]["role"] == "system"
-    assert "translated into an Indic language" in params.messages[0]["content"]
-    assert params.messages[1] == {"role": "user", "content": "judge input"}
+    assert params.messages == messages
     assert params.max_tokens == 16384 and params.temperature == 0.0
     assert srv.config.judge_chat_completions_create_params.model_dump() == original
+
+
+def test_custom_judge_prompt_uses_shared_template_renderer(tmp_path) -> None:
+    path = tmp_path / "judge.yaml"
+    path.write_text("system: Custom rubric judge\nuser: '{candidate} versus {reference_answer}'\n", encoding="utf-8")
+    srv = server()
+    srv.config.judge_prompt_path = str(path)
+    srv._call_judge = AsyncMock(return_value=("Feedback [RESULT] 4", "stop"))
+    body = request("उत्तर with {literal} braces")
+    result = asyncio.run(srv.verify(body))
+    assert result.score == 4
+    assert srv._call_judge.call_args.args[0] == [
+        {"role": "system", "content": "Custom rubric judge"},
+        {
+            "role": "user",
+            "content": f"उत्तर with {{literal}} braces versus {body.verifier_metadata['reference_answer']} ",
+        },
+    ]
 
 
 @pytest.mark.parametrize("choice_count", [0, 2])

@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from benchmarks.indic_biggenbench import prepare as module
+from benchmarks.indic.biggenbench import prepare as module
 
 
 def _write(path: Path, rows: list[dict]) -> None:

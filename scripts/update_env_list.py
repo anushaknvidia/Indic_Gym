@@ -315,19 +315,19 @@ def get_training_server_info() -> list[ServerInfo]:  # pragma: no cover
                 )
 
     if BENCHMARKS_FOLDER.exists():
-        for benchmark_dir in BENCHMARKS_FOLDER.iterdir():
-            if not benchmark_dir.is_dir() or benchmark_dir.name.startswith("example_"):
-                continue
-
-            yaml_file = benchmark_dir / "config.yaml"
-            if not yaml_file.is_file():
+        for yaml_file in sorted(BENCHMARKS_FOLDER.rglob("config.yaml")):
+            relative_dir = yaml_file.parent.relative_to(BENCHMARKS_FOLDER)
+            if any(part.startswith("example_") for part in relative_dir.parts):
                 continue
 
             yaml_data, display_name = extract_benchmark_metadata(yaml_file)
             if not {"train", "validation"}.intersection(yaml_data.types):
                 continue
 
-            server_name = benchmark_dir.name
+            server_name = relative_dir.as_posix()
+            if len(relative_dir.parts) > 1:
+                group_name = " / ".join(part.replace("_", " ").title() for part in relative_dir.parts[:-1])
+                display_name = f"{group_name} / {display_name}"
             training_servers.append(
                 ServerInfo(
                     name=server_name,
