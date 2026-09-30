@@ -1,0 +1,35 @@
+name: indic_biggenbench
+version: 0.1.0
+experimental: true
+kind: benchmark
+integration_profile: custom-gym-verifier
+domain: other
+description: Indic BigGenBench translations scored against original instance-specific 1–5 rubrics by an LLM judge.
+modality: text
+licensing: CC-BY-SA-4.0
+authors:
+  - anushakamathofficial
+reward:
+  range: [0.0, 1.0]
+  higher_is_better: true
+determinism: unknown
+resources_server: biggenbench
+agent_server: simple_agent
+model_server: policy_model
+prompt_source: prepared
+datasets:
+  - name: indic_biggenbench
+    type: benchmark
+    jsonl_fpath: benchmarks/indic_biggenbench/data/indic_biggenbench_benchmark.jsonl
+    prepare_script: benchmarks/indic_biggenbench/prepare.py
+    num_repeats: 1
+  - name: smoke
+    type: validation
+    jsonl_fpath: benchmarks/indic_biggenbench/data/indic_biggenbench_smoke.jsonl
+    num_repeats: 1
+  - name: example
+    type: example
+    jsonl_fpath: resources_servers/biggenbench/data/example.jsonl
+    num_repeats: 1
+canonical_split: benchmark
+lifecycle: active

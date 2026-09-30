@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+config_paths:
+  - resources_servers/biggenbench/configs/biggenbench.yaml
+
+judge_base_url: https://inference-api.nvidia.com/v1
+judge_api_key: ${oc.env:NVIDIA_API_KEY,null}
+judge_model_name: gcp/google/gemini-3.8-flash
+
+biggenbench_simple_agent:
+  responses_api_agents:
+    simple_agent:
+      datasets:
+        - name: indic_biggenbench
+          type: benchmark
+          jsonl_fpath: benchmarks/indic_biggenbench/data/indic_biggenbench_benchmark.jsonl
+          prepare_script: benchmarks/indic_biggenbench/prepare.py
+          license: CC BY-SA 4.0
+          num_repeats: 1
+        - name: smoke
+          type: validation
+          jsonl_fpath: benchmarks/indic_biggenbench/data/indic_biggenbench_smoke.jsonl
+          license: CC BY-SA 4.0
+          num_repeats: 1
+        - name: example
+          type: example
+          jsonl_fpath: resources_servers/biggenbench/data/example.jsonl
+          license: CC BY-SA 4.0

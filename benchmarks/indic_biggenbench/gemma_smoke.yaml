@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Native Gym Slurm recipe. Cluster paths and runtimes are supplied by the caller.
+compute:
+  cluster:
+    type: slurm
+    account: ${oc.env:SLURM_ACCOUNT}
+    walltime: "00:45:00"
+    node_pools:
+      compute:
+        partition: ${oc.env:SLURM_PARTITION,batch}
+        nodes: 1
+        ntasks_per_node: 1
+        gpus_per_node: 2
+        extra_args: {constraint: H100, cpus-per-task: "16", mem: 256G}
+
+services:
+  gemma:
+    type: vllm
+    container: ${oc.env:BIGGEN_VLLM_CONTAINER}
+    model: ${oc.env:BIGGEN_MODEL_PATH}
+    served_model_name: google/gemma-4-31B-it
+    tensor_parallel_size: 2
+    trust_remote_code: true
+    health_check: {timeout_seconds: 1200}
+    mounts: ["${oc.env:BIGGEN_SHARED_ROOT}"]
+    env: {HF_HUB_OFFLINE: "lit:1", OMP_NUM_THREADS: "lit:1", VLLM_NO_USAGE_STATS: "lit:1"}
+    pre_command: |
+      export PATH="${oc.env:BIGGEN_VLLM_BIN}:$PATH"
+      export VLLM_CACHE_ROOT="/tmp/indic-biggen-vllm-$SLURM_JOB_ID"
+      unset RAY_ADDRESS
+    extra_args: >-
+      --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.85
+      --max-num-seqs 8 --enable-chunked-prefill --max-num-batched-tokens 2048
+      --enforce-eager --no-enable-prefix-caching --reasoning-parser gemma4
+      --generation-config vllm --override-generation-config '{"eos_token_id":[1,106,50]}'
+      --kv-cache-dtype fp8 --limit-mm-per-prompt '{"image":0,"video":0,"audio":0}'
+
+driver:
+  policy_model: gemma
+  policy_model_type: vllm_model
+  container: python:3.13
+  gym_install:
+    repo: ${oc.env:BIGGEN_GYM_REPO}
+    ref: indic/biggenbench
+  mounts: ["${oc.env:BIGGEN_SHARED_ROOT}"]
+  env:
+    NVIDIA_API_KEY: runtime:NVIDIA_API_KEY
+    RAY_TMPDIR: lit:/tmp
+    OMP_NUM_THREADS: "lit:1"
+  benchmarks:
+    indic_biggenbench:
+      prepare:
+        config_paths: [benchmarks/indic_biggenbench/config.yaml]
+        prepare_script_args:
+          dataset_dir: ${oc.env:BIGGEN_DATASET_DIR}
+      run:
+        config_paths: [benchmarks/indic_biggenbench/config.yaml]
+        split: validation
+        num_samples_in_parallel: 2
+        responses_create_params: {temperature: 0.0, max_output_tokens: 8192}
+        judge_base_url: https://inference-api.nvidia.com/v1
+        judge_model_name: gcp/google/gemini-3.8-flash
+        policy_model:
+          responses_api_models:
+            vllm_model:
+              uses_interleaved_reasoning: false
+              chat_template_kwargs: {enable_thinking: false}
+              sampling_overrides: {temperature: 0.0}
+
+job:
+  output_path: ${oc.env:BIGGEN_OUTPUT_DIR}
+otel:
+  enabled: false
