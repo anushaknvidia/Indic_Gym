@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: indic/human_eval
+version: 0.1.0
+experimental: true
+kind: benchmark
+integration_profile: custom-gym-verifier
+domain: coding
+description: Multilingual HumanEval in English and 14 Indic languages, scored with the original tests.
+modality: text
+licensing: Apache-2.0 AND MIT
+authors: [Anusha Kamath]
+reward:
+  range: [0, 1]
+  higher_is_better: true
+determinism: unknown
+dataset_owner: indic_humaneval_simple_agent
+resources_server: humaneval_reference
+agent_server: simple_agent
+model_server: policy_model
+datasets:
+  - name: indic_humaneval
+    type: benchmark
+    jsonl_fpath: benchmarks/indic/human_eval/data/indic_humaneval_benchmark.jsonl
+    prepare_script: benchmarks/indic/human_eval/prepare.py
+    num_repeats: 1
+canonical_split: benchmark
+prompt_source: prepared
+session_model: episode
+state: none
+lifecycle: active

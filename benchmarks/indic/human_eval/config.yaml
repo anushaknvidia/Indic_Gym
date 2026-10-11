@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+config_paths:
+  - resources_servers/humaneval_reference/configs/humaneval_reference.yaml
+
+indic_humaneval_resources_server:
+  _inherit_from: humaneval_reference
+
+indic_humaneval_simple_agent:
+  _inherit_from: humaneval_reference_simple_agent
+  responses_api_agents:
+    simple_agent:
+      resources_server:
+        name: indic_humaneval_resources_server
+      datasets:
+        - name: indic_humaneval
+          type: benchmark
+          jsonl_fpath: benchmarks/indic/human_eval/data/indic_humaneval_benchmark.jsonl
+          prepare_script: benchmarks/indic/human_eval/prepare.py
+          num_repeats: 1
+          license: Apache 2.0
+
+indic_humaneval_environment_server:
+  _inherit_from: humaneval_reference_environment_server
+  environment_servers:
+    legacy_agent:
+      agent_server:
+        name: indic_humaneval_simple_agent
