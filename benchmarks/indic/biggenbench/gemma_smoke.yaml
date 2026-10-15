@@ -30,7 +30,7 @@ services:
       export VLLM_CACHE_ROOT="/tmp/indic-biggen-vllm-$SLURM_JOB_ID"
       unset RAY_ADDRESS
     extra_args: >-
-      --dtype bfloat16 --max-model-len 32768 --gpu-memory-utilization 0.85
+      --dtype bfloat16 --max-model-len 65536 --gpu-memory-utilization 0.85
       --max-num-seqs 8 --enable-chunked-prefill --max-num-batched-tokens 2048
       --enforce-eager --no-enable-prefix-caching --reasoning-parser gemma4
       --generation-config vllm --override-generation-config '{"eos_token_id":[1,106,50]}'
@@ -58,15 +58,15 @@ driver:
         config_paths: [benchmarks/indic/biggenbench/config.yaml]
         split: validation
         num_samples_in_parallel: 2
-        responses_create_params: {temperature: 0.0, max_output_tokens: 8192}
+        responses_create_params: {temperature: 1.0, top_p: 0.95, max_output_tokens: 32768}
         judge_base_url: https://inference-api.nvidia.com/v1
         judge_model_name: gcp/google/gemini-3.8-flash
         policy_model:
           responses_api_models:
             vllm_model:
               uses_interleaved_reasoning: false
-              chat_template_kwargs: {enable_thinking: false}
-              sampling_overrides: {temperature: 0.0}
+              chat_template_kwargs: {enable_thinking: true}
+              sampling_overrides: {temperature: 1.0, top_p: 0.95, top_k: 64}
 
 job:
   output_path: ${oc.env:BIGGEN_OUTPUT_DIR}
