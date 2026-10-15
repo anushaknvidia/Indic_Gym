@@ -1,0 +1,28 @@
+name: indic/ifbench
+version: 0.1.0
+experimental: true
+kind: benchmark
+integration_profile: custom-gym-verifier
+domain: instruction_following
+description: Indic IFBench in twelve languages with localized instruction checks
+modality: text
+licensing: unknown
+authors:
+- ai4bharat
+reward:
+  range: [0.0, 1.0]
+  higher_is_better: true
+determinism: seeded
+resources_server: indic_ifbench
+agent_server: simple_agent
+model_server: policy_model
+datasets:
+- name: indic_ifbench
+  type: benchmark
+  jsonl_fpath: benchmarks/indic/ifbench/data/indic_ifbench_benchmark.jsonl
+  prepare_script: benchmarks/indic/ifbench/prepare.py
+  prompt_config: benchmarks/indic/ifbench/prompts/default.yaml
+  num_repeats: 5
+canonical_split: benchmark
+standard_prompt_config: benchmarks/indic/ifbench/prompts/default.yaml
+lifecycle: active
