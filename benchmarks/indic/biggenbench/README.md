@@ -48,13 +48,18 @@ gym eval run --benchmark indic/biggenbench --split validation \
   --model-type vllm_model --output results/indic_biggenbench_smoke.jsonl \
   +policy_model_name=google/gemma-4-31B-it \
   +policy_base_url=http://localhost:8000/v1 +policy_api_key=dummy \
-  +responses_create_params.temperature=0.0 \
-  +responses_create_params.max_output_tokens=8192 \
-  +policy_model.responses_api_models.vllm_model.chat_template_kwargs.enable_thinking=false
+  +responses_create_params.temperature=1.0 \
+  +responses_create_params.top_p=0.95 \
+  +responses_create_params.max_output_tokens=32768 \
+  +policy_model.responses_api_models.vllm_model.chat_template_kwargs.enable_thinking=true \
+  +policy_model.responses_api_models.vllm_model.sampling_overrides.top_k=64
 ```
 
 For Slurm, `gemma_smoke.yaml` supplies a native `gym eval submit` recipe matching
-the tested two-H100 Gemma setup. Set `SLURM_ACCOUNT`, `BIGGEN_VLLM_CONTAINER`,
+the two-H100 Gemma setup. It enables thinking with 32,768 output tokens (reasoning
+and final answer combined), temperature 1, top_p 0.95, and top_k 64. The model
+server allows 65,536 context tokens to accommodate both prompt and output.
+Set `SLURM_ACCOUNT`, `BIGGEN_VLLM_CONTAINER`,
 `BIGGEN_MODEL_PATH`, `BIGGEN_VLLM_BIN`, `BIGGEN_SHARED_ROOT`, `BIGGEN_GYM_REPO`,
 `BIGGEN_DATASET_DIR`, and `BIGGEN_OUTPUT_DIR` to your cluster paths.
 `BIGGEN_GYM_REPO` is a repository URL or mounted checkout with branch
