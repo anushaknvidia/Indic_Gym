@@ -159,7 +159,7 @@ def test_each_language_uses_own_words(language, pronoun, conjunction, word):
 
 def test_graphemes_including_joiners_and_native_terminators():
     assert aksharas("कक्षा") == ["क", "क्षा"]
-    assert aksharas("க்\u200dகா") == ["க்\u200dகா"]
+    assert aksharas("க்\u200dகா") == ["க்\u200d", "கா"]
     assert words("क्\u200dषेत्र किताबें।") == ["क्\u200dषेत्र", "किताबें"]
     assert sentences("यह 3.14 है। ठीक? ہاں۔ کیا؟") == ["यह 3.14 है।", "ठीक?", "ہاں۔", "کیا؟"]
     assert vowel_nuclei("क का कि क्", "hi") == ["A", "AA", "I"]

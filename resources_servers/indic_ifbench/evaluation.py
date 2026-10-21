@@ -11,6 +11,7 @@ import csv
 import io
 import math
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Mapping
 
@@ -20,13 +21,62 @@ from pydantic import JsonValue
 
 from resources_servers.indic_ifbench.languages import (
     LANGUAGE_RULES,
+    SENTENCE_CLOSERS,
+    SENTENCE_TERMINATORS,
     aksharas,
     normalize,
+    sentence_ending,
     sentences,
     vowel_nuclei,
     words,
 )
 from resources_servers.indic_ifbench.task_data import normalize_language, validate_instruction
+
+
+def _contains_words(tokens: list[str], phrase: tuple[str, ...]) -> bool:
+    return bool(phrase) and any(
+        tuple(tokens[i : i + len(phrase)]) == phrase for i in range(len(tokens) - len(phrase) + 1)
+    )
+
+
+def _output_template(text: str, headings: list[str]) -> bool:
+    headings = [normalize(heading) for heading in headings]
+    if any(text.count(heading) != 1 for heading in headings) or not text.lstrip().startswith(headings[0]):
+        return False
+    positions = [text.index(heading) for heading in headings]
+    if positions != sorted(positions):
+        return False
+    ends = [*positions[1:], len(text)]
+    return all(text[start + len(heading) : end].strip() for heading, start, end in zip(headings, positions, ends))
+
+
+def _quote_unquote(value: str) -> bool:
+    pairs = {'"': '"', "'": "'", "“": "”", "‘": "’", "«": "»", "‹": "›"}
+    stack: list[tuple[int, str]] = []
+    passages: list[tuple[int, int]] = []
+    for index, char in enumerate(value):
+        if char in "'’" and 0 < index < len(value) - 1:
+            # Match words()'s internal-apostrophe policy, including Indic marks.
+            if regex.fullmatch(r"[\p{L}\p{M}]", value[index - 1]) and regex.fullmatch(r"\p{L}", value[index + 1]):
+                continue
+        if stack and char == stack[-1][1]:
+            start, _ = stack.pop()
+            if not value[start + 1 : index].strip():
+                return False
+            if not stack:
+                passages.append((start, index + 1))
+        elif char in pairs:
+            stack.append((index, pairs[char]))
+        elif char in pairs.values():
+            return False
+    if stack or not passages:
+        return False
+    # Nested quotations share their enclosing passage's explanation. Only words
+    # outside the quoted passage count as an unquoted explanation.
+    return all(
+        words(value[end : passages[i + 1][0] if i + 1 < len(passages) else None])
+        for i, (_, end) in enumerate(passages)
+    )
 
 
 def _nested(value: str, *, quotes: bool = False) -> bool:
@@ -63,7 +113,13 @@ def _csv_check(value: str, *, columns: list[str], kind: str) -> bool:
     except csv.Error:
         return False
     count = {"city": 7, "special_character": 14, "quotes": 3}[kind]
-    if len(rows) != count + 1 or rows[0] != columns or any(len(row) != 5 for row in rows):
+    if len(rows) != count + 1 or any(len(row) != 5 for row in rows):
+        return False
+    # Exact CSV spelling/case and delimiters still matter; equivalent Unicode
+    # encodings of the same Indic header must compare equal.
+    if [unicodedata.normalize("NFC", field) for field in rows[0]] != [
+        unicodedata.normalize("NFC", field) for field in columns
+    ]:
         return False
     if kind == "quotes":
         field = r'"(?:[^"\r\n]|"")*"'
@@ -112,17 +168,13 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
         case "count:keywords_multiple":
             return all(text.count(normalize(k[f"keyword{i}"])) == count for i, count in enumerate((1, 2, 3, 5, 7), 1))
         case "count:numbers":
-            return len(regex.findall(r"(?:\d{1,3}(?:[,٬]\d{3})+|\d+)(?:[.٫]\d+)?", text)) == k["N"]
+            # Support lakh/crore grouping as well as Western thousands, native
+            # decimal digits, and the Arabic thousands/decimal separators.
+            number = r"(?:\d{1,2}(?:[,٬]\d{2})+[,٬]\d{3}|\d{1,3}(?:[,٬]\d{3})+|\d+)(?:[.٫]\d+)?"
+            return len(regex.findall(number, text)) == k["N"]
         case "count:person_names":
             return (
-                sum(
-                    bool(
-                        regex.search(
-                            r"(?<![\p{L}\p{M}\p{N}])" + regex.escape(normalize(name)) + r"(?![\p{L}\p{M}\p{N}])", text
-                        )
-                    )
-                    for name in set(k["_lang"]["names"])
-                )
+                sum(_contains_words(tokens, name) for name in {tuple(words(name)) for name in k["_lang"]["names"]})
                 >= k["N"]
             )
         case "count:pronouns":
@@ -138,11 +190,12 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
             ref = {reference[i : i + 3] for i in range(len(reference) - 2)}
             return bool(grams) and abs(100 * len(grams & ref) / len(grams) - k["percentage"]) <= 2
         case "ratio:sentence_type" | "ratio:sentence_balance":
-            declarations = sum(s.endswith((".", "।", "॥", "۔")) for s in sents)
-            questions = sum(s.endswith(("?", "؟")) for s in sents)
+            endings = [sentence_ending(s) for s in sents]
+            declarations = sum(e.endswith((".", "।", "॥", "۔")) for e in endings)
+            questions = sum(e.endswith(("?", "؟")) for e in endings)
             if instruction_id.endswith("type"):
                 return questions > 0 and declarations == 2 * questions
-            exclamations = sum(s.endswith("!") for s in sents)
+            exclamations = sum(e.endswith("!") for e in endings)
             return questions > 0 and declarations == questions == exclamations
         case "ratio:sentence_words":
             token_lists = [words(s) for s in sents]
@@ -192,7 +245,7 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
                 and len({v for t in tokens for v in vowel_nuclei(t, language)}) <= 3
             )
         case "words:consonants":
-            consonants = "".join(c for c in rules.alphabet if c not in rules.vowels)
+            consonants = "".join(sorted(rules.consonants))
             pattern = f"[{consonants}]\\p{{M}}*{rules.virama}[\\u200c\\u200d]*[{consonants}]"
             return bool(tokens) and all(regex.search(pattern, t) for t in tokens)
         case "words:odd_even_syllables":
@@ -243,7 +296,7 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
             # An emoji just after a terminator belongs to the preceding
             # sentence. Graphemes preserve flags, skin tones, and ZWJ sequences.
             for index, sentence in enumerate(sents):
-                units = regex.findall(r"\X", sentence.rstrip(" .!?।॥۔؟\n\t"))
+                units = regex.findall(r"\X", sentence.rstrip(" \n\t" + SENTENCE_TERMINATORS + SENTENCE_CLOSERS))
                 if units and emoji.is_emoji(units[-1]):
                     continue
                 following = regex.findall(r"\X", sents[index + 1]) if index + 1 < len(sents) else []
@@ -251,12 +304,7 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
                     return False
             return bool(sents)
         case "format:quote_unquote":
-            value = response.replace("“", '"').replace("”", '"')
-            quotes = list(re.finditer(r'"[^"\n]+"', value))
-            return bool(quotes) and all(
-                words(value[m.end() : quotes[i + 1].start() if i + 1 < len(quotes) else None])
-                for i, m in enumerate(quotes)
-            )
+            return _quote_unquote(response)
         case "format:list":
             return len(re.findall(r"(?m)^\s*" + re.escape(k["sep"]), response)) >= 2
         case "format:thesis":
@@ -274,7 +322,7 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
                 and all(line.strip().startswith("*") for line in lines[first:])
             )
         case "format:output_template":
-            return all(normalize(fixed[key]) in text for key in ("my_answer", "my_conclusion", "future_outlook"))
+            return _output_template(text, [fixed[key] for key in ("my_answer", "my_conclusion", "future_outlook")])
         case "repeat:repeat_simple":
             return text.strip() == normalize(fixed["repeat_simple_sentence"]).strip()
         case "repeat:repeat_change":
@@ -284,11 +332,11 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
         case "repeat:repeat_span":
             return text.split() == normalize(k["prompt_to_repeat"]).split()[k["n_start"] : k["n_end"] + 1]
         case "custom:word_reverse":
-            return normalize(fixed["bald_eagle"]) in " ".join(tokens[::-1])
+            return _contains_words(tokens[::-1], tuple(words(fixed["bald_eagle"])))
         case "custom:character_reverse":
             return "".join(aksharas(fixed["bald_eagle"])[::-1]) in text
         case "custom:european_capitals_sort":
-            return [c.strip() for c in text.split(",")] == [normalize(c) for c in fixed["european_capitals"]]
+            return [c.strip() for c in re.split("[,،]", text)] == [normalize(c) for c in fixed["european_capitals"]]
         case "custom:csv_city" | "custom:csv_special_character" | "custom:csv_quotes":
             kind = instruction_id.removeprefix("custom:csv_")
             key = {"city": "csv_city_cols", "special_character": "csv_special_cols", "quotes": "csv_quotes_cols"}[kind]
@@ -300,7 +348,7 @@ def check_instruction(instruction_id: str, kwargs: Mapping[str, JsonValue], *, l
         case "custom:date_format_list":
             from datetime import date
 
-            for part in response.strip().split(","):
+            for part in re.split("[,،]", response.strip()):
                 if not re.fullmatch(r"\s*\d{4}-\d{2}-\d{2}\s*", part):
                     return False
                 year, month, day = map(int, part.split("-"))

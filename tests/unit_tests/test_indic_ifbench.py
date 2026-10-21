@@ -144,6 +144,8 @@ def test_metrics_weight_instructions_and_languages_separately():
         summarize([masked])
     with pytest.raises(ValueError, match="version"):
         summarize([{**rows[0], "evaluator_version": "another"}])
+    with pytest.raises(ValueError, match="version"):
+        summarize([rows[0], {**rows[1], "evaluator_version": "indic-ifbench-v1"}])
     with pytest.raises(ValueError, match="aligned"):
         summarize([row("hi", [], [])])
     with pytest.raises(ValueError, match="booleans"):

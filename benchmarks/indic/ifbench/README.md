@@ -105,7 +105,10 @@ attempts/instructions; macro accuracy weights each language equally, which matte
 because Urdu has fewer rows. Partial runs report only evaluated rows/languages.
 
 This is an experimental evaluator created for these translations. Read its
-[versioned language policy](../../../resources_servers/indic_ifbench/README.md#version-1-language-policy),
+[versioned language policy](../../../resources_servers/indic_ifbench/README.md#version-2-language-policy),
 especially the exact-match lexical inventories and orthographic syllable
 approximation. Native-speaker review and real-model baselining are still required
 before setting `verified: true` or treating the scores as an official reference.
+The [language audit](../../../resources_servers/indic_ifbench/language-audit.md)
+records fixes and remaining review items. Version 2 scores require reverification
+of responses previously evaluated with version 1; do not mix evaluator versions.

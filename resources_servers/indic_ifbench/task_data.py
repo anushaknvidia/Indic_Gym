@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, m
 
 LANGUAGES = ("bn", "gu", "hi", "kn", "mr", "ml", "ne", "or", "pa", "ta", "te", "ur")
 ALIASES = {"ka": "kn", "mar": "mr", "mal": "ml"}
-EVALUATOR_VERSION = "indic-ifbench-v1"
+EVALUATOR_VERSION = "indic-ifbench-v2"
 
 
 def normalize_language(language: str) -> str:
