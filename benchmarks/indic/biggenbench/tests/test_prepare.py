@@ -197,21 +197,38 @@ def test_corrupt_downloaded_upstream_is_rejected(source: dict) -> None:
     assert not module.OUTPUT_FPATH.exists()
 
 
-def test_no_argument_prepare_downloads_pinned_sources_and_writes_smoke(
-    source: dict, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def wide_source(source: dict) -> dict:
+    rows = [
+        {
+            **{key: value for key, value in row.items() if key != "score_rubric"},
+            "instance_idx": index,
+            **{f"score_rubric_{key}": value for key, value in row["score_rubric"].items()},
+            **{
+                f"input_{name}_translation": f"{language} translation {index}"
+                for language, name in module.LANGUAGES.items()
+                if language != "en"
+            },
+        }
+        for index, row in enumerate(source["upstream"])
+    ]
+    path = source["local_dir"] / "test.parquet"
+    _write(path, rows)
+    return {**source, "wide_path": path, "wide_rows": rows}
+
+
+def test_no_argument_prepare_downloads_pinned_source_and_writes_smoke(
+    wide_source: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def download(repo: str, filename: str, *, repo_type: str, revision: str) -> str:
         assert repo_type == "dataset"
-        if repo == module.UPSTREAM_DATASET:
-            assert revision == module.UPSTREAM_REVISION
-            assert filename == "data/test-00000-of-00001.parquet"
-            return str(source["upstream_path"])
-        assert repo == module.HF_DATASET
+        assert repo == "ai4bharat/indic-biggenbench"
         assert revision == module.HF_REVISION
-        return str(source["local_dir"] / filename)
+        assert filename == "test.parquet"
+        return str(wide_source["wide_path"])
 
     module.hf_hub_download.side_effect = download
-    monkeypatch.setattr(module, "UPSTREAM_SHA256", module._checksum(source["upstream_path"]))
+    monkeypatch.setattr(module, "HF_SHA256", module._checksum(wide_source["wide_path"]))
     output = module.prepare()
     rows = [json.loads(line) for line in output.read_text().splitlines()]
     smoke = [json.loads(line) for line in output.with_name("indic_biggenbench_smoke.jsonl").read_text().splitlines()]
@@ -221,5 +238,68 @@ def test_no_argument_prepare_downloads_pinned_sources_and_writes_smoke(
     assert smoke == rows[::3]
     assert examples == smoke[:5]
     manifest = json.loads((output.parent / "prepare_manifest.json").read_text())
+    assert manifest["indic_dataset"] == "ai4bharat/indic-biggenbench"
     assert manifest["indic_revision"] == module.HF_REVISION
-    assert manifest["upstream_revision"] == module.UPSTREAM_REVISION
+    assert manifest["source_layout"] == "translation_columns"
+    assert module.hf_hub_download.call_count == 1
+
+
+def test_wide_source_keeps_original_rubric_and_expands_requested_translations(wide_source: dict) -> None:
+    rows = _prepare(wide_source, languages=["en", "as", "ka", "mar", "mal", "sa"])
+    assert list(dict.fromkeys(row["language"] for row in rows)) == ["en", "as", "kn", "mr", "ml", "sa"]
+    for index, row in enumerate(rows):
+        source_row = wide_source["upstream"][index % 3]
+        metadata = row["verifier_metadata"]
+        assert metadata["score_rubric"] == source_row["score_rubric"]
+        assert metadata["reference_answer"] == source_row["reference_answer"]
+        assert metadata["instance_idx"] == index % 3
+        assert row["responses_create_params"]["input"][0]["content"] == source_row["system_prompt"]
+        assert row["responses_create_params"]["input"][-1]["content"] == (
+            source_row["input"] if row["language"] == "en" else f"{row['language']} translation {index % 3}"
+        )
+        assert "Hidden rubric" not in json.dumps(row["responses_create_params"])
+        assert source_row["reference_answer"] not in json.dumps(row["responses_create_params"])
+        assert not any("translation" in key for key in metadata)
+    module.hf_hub_download.assert_not_called()
+    manifest = json.loads((module.OUTPUT_FPATH.parent / "prepare_manifest.json").read_text())
+    assert manifest["indic_revision"] is None
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_blank_translation_fails_without_english_fallback_or_output_replacement(wide_source: dict, value) -> None:
+    wide_source["wide_rows"][0]["input_Hindi_translation"] = value
+    _write(wide_source["wide_path"], wide_source["wide_rows"])
+    module.OUTPUT_FPATH.parent.mkdir()
+    module.OUTPUT_FPATH.write_text("existing output\n")
+    with pytest.raises(ValueError, match="input_Hindi_translation"):
+        _prepare(wide_source)
+    assert module.OUTPUT_FPATH.read_text() == "existing output\n"
+
+
+@pytest.mark.parametrize("problem", ["duplicate", "rubric", "reference", "missing_translation", "empty"])
+def test_rejects_incomplete_public_source(wide_source: dict, problem: str) -> None:
+    rows = wide_source["wide_rows"]
+    if problem == "duplicate":
+        rows.append(rows[0])
+    elif problem == "empty":
+        rows = []
+    else:
+        key = {
+            "rubric": "score_rubric_score5_description",
+            "reference": "reference_answer",
+            "missing_translation": "input_Hindi_translation",
+        }[problem]
+        for row in rows:
+            row.pop(key)
+    _write(wide_source["wide_path"], rows)
+    with pytest.raises(ValueError):
+        _prepare(wide_source)
+    assert not module.OUTPUT_FPATH.exists()
+
+
+def test_corrupt_public_download_is_rejected(wide_source: dict) -> None:
+    module.hf_hub_download.side_effect = None
+    module.hf_hub_download.return_value = str(wide_source["wide_path"])
+    with pytest.raises(ValueError, match="Indic parquet checksum"):
+        module.prepare()
+    assert not module.OUTPUT_FPATH.exists()

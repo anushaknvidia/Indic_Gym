@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Join translated Indic inputs to pinned original BiGGen-Bench judging metadata.
+"""Prepare AI4Bharat Indic BiGGenBench translations and task-specific rubrics.
 
 Original system prompts, references, and rubrics remain in English. Only system
 prompts and translated inputs reach the policy model; no language instruction is
@@ -19,13 +19,31 @@ from huggingface_hub import hf_hub_download
 from nemo_gym import _resolve_under_cwd_or_install
 
 
-HF_DATASET = "anushakamathofficial/indic_biggenbench"
-HF_REVISION = "9818296bb33a0e196ba085201f9f315dc40b68a4"
+HF_DATASET = "ai4bharat/indic-biggenbench"
+HF_REVISION = "9b9b351b0cac550aaf484808e7d9f4a6d4d92a18"
+HF_SHA256 = "764c68ac9d12e5085659f6561086b225fc25a48ed24132a8bc7903de56ddeb3e"
 UPSTREAM_DATASET = "prometheus-eval/BiGGen-Bench"
 UPSTREAM_REVISION = "3a9589efbad801052bb2e153b44ce027498c27e4"
 UPSTREAM_SHA256 = "b5ace27fb84b60e173ecbea787ebc8a4334f220d361d5776e12da82205dc7c71"
 DEFAULT_LANGUAGES = ("bn", "gu", "hi", "kn", "mr", "ml", "ne", "or", "pa", "ta", "te", "ur")
 LANGUAGE_ALIASES = {"ka": "kn", "mar": "mr", "mal": "ml"}
+LANGUAGES = {
+    "en": "English",
+    "as": "Assamese",
+    "bn": "Bengali",
+    "gu": "Gujarati",
+    "hi": "Hindi",
+    "kn": "Kannada",
+    "ml": "Malayalam",
+    "mr": "Marathi",
+    "ne": "Nepali",
+    "or": "Odia",
+    "pa": "Punjabi",
+    "sa": "Sanskrit",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "ur": "Urdu",
+}
 RUBRIC_KEYS = ("criteria", *(f"score{score}_description" for score in range(1, 6)))
 OUTPUT_FPATH = Path(__file__).parent / "data" / "indic_biggenbench_benchmark.jsonl"
 EXAMPLE_FPATH = _resolve_under_cwd_or_install("resources_servers/biggenbench/data/example.jsonl")
@@ -65,6 +83,9 @@ def _index_parquet(path: Path, *, language: str | None = None) -> dict[str, dict
             for key in ("reference_answer", "capability", "task"):
                 _text(row, key, context)
             _text(row, "system_prompt", context, allow_empty=True)
+            # The public parquet stores the rubric as six flattened columns.
+            if "score_rubric" not in row:
+                row["score_rubric"] = {key: row.get(f"score_rubric_{key}") for key in RUBRIC_KEYS}
             rubric = row.get("score_rubric")
             if not isinstance(rubric, dict):
                 raise ValueError(f"Missing score_rubric for {row_id}")
@@ -99,7 +120,12 @@ def _format_entry(*, row: dict[str, object], source: dict[str, object], language
             "input": row["input"],
             "source_input": source["input"],
             **{key: source[key] for key in ("system_prompt", "reference_answer", "score_rubric")},
-            **{key: row.get(key) for key in ("judge_pass_stage", "human_evaluation_pending", "human_review_reason")},
+            **{key: source[key] for key in ("instance_idx",) if key in source},
+            **{
+                key: row[key]
+                for key in ("judge_pass_stage", "human_evaluation_pending", "human_review_reason")
+                if key in row
+            },
         },
     }
 
@@ -113,32 +139,8 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     temporary.replace(path)
 
 
-def prepare(
-    *,
-    dataset_dir: str | None = None,
-    languages: list[str] | None = None,
-    upstream_file: str | None = None,
-    output_file: str | None = None,
-    example_file: str | None = None,
-) -> Path:
-    """Prepare full and smoke JSONLs from pinned Hugging Face datasets or local parquet.
-
-    Supply both ``dataset_dir`` and ``upstream_file`` for offline preparation.
-    Custom files are identified by SHA-256 in the adjacent manifest, without
-    claiming they match a pinned revision. All joins are validated before writes.
-    """
-    local_dir = Path(dataset_dir).expanduser().resolve() if dataset_dir else None
-    supported = (
-        sorted(path.parent.name for path in local_dir.glob("data/*/test.parquet"))
-        if local_dir
-        else [*DEFAULT_LANGUAGES, "en", "as", "sa"]
-    )
-    selected = list(dict.fromkeys(LANGUAGE_ALIASES.get(lang, lang) for lang in (languages or DEFAULT_LANGUAGES)))
-    if languages == []:
-        raise ValueError("Select at least one language")
-    if invalid := set(selected) - set(supported):
-        raise ValueError(f"Unsupported languages: {sorted(invalid)}. Supported: {supported}")
-
+def _load_language_files(local_dir: Path, selected: list[str], upstream_file: str | None) -> tuple[dict, dict, dict]:
+    """Read per-language local exports and validate their join to the original rubric."""
     upstream_path = (
         Path(upstream_file).expanduser().resolve()
         if upstream_file
@@ -152,12 +154,7 @@ def prepare(
     if not upstream_file and upstream_hash != UPSTREAM_SHA256:
         raise ValueError(f"Upstream parquet checksum does not match the pinned source: {upstream_path}")
     upstream = _index_parquet(upstream_path)
-    paths = {
-        lang: local_dir / "data" / lang / "test.parquet"
-        if local_dir
-        else Path(hf_hub_download(HF_DATASET, f"data/{lang}/test.parquet", repo_type="dataset", revision=HF_REVISION))
-        for lang in dict.fromkeys(["en", *selected])
-    }
+    paths = {lang: local_dir / "data" / lang / "test.parquet" for lang in dict.fromkeys(["en", *selected])}
     english = _index_parquet(paths["en"], language="en")
     for row_id, row in english.items():
         if row_id not in upstream:
@@ -165,7 +162,7 @@ def prepare(
         if row["input"] != upstream[row_id]["input"]:
             raise ValueError(f"English source input mismatch for {row_id}; cannot safely attach its rubric")
 
-    entries, smoke = [], []
+    translations = {}
     for language in selected:
         local = _index_parquet(paths[language], language=language)
         if local.keys() != english.keys():
@@ -173,6 +170,77 @@ def prepare(
         for row_id, row in local.items():
             if row["row_index"] != english[row_id]["row_index"]:
                 raise ValueError(f"Source row_index mismatch for ({language}, {row_id})")
+        translations[language] = local
+    return (
+        upstream,
+        translations,
+        {
+            "source_layout": "language_files",
+            "indic_revision": None,
+            "english_source_sha256": _checksum(paths["en"]),
+            "upstream_dataset": UPSTREAM_DATASET,
+            "upstream_revision": UPSTREAM_REVISION if upstream_hash == UPSTREAM_SHA256 else None,
+            "upstream_sha256": upstream_hash,
+            "source_files": {lang: {"path": str(path), "sha256": _checksum(path)} for lang, path in paths.items()},
+        },
+    )
+
+
+def prepare(
+    *,
+    dataset_dir: str | None = None,
+    languages: list[str] | None = None,
+    upstream_file: str | None = None,
+    output_file: str | None = None,
+    example_file: str | None = None,
+) -> Path:
+    """Write Gym benchmark and smoke rows from the pinned Hub release or local parquet.
+
+    A local ``test.parquet`` contains translations and rubrics together. Local
+    ``data/<language>/test.parquet`` exports additionally use ``upstream_file``.
+    Inputs are validated before replacing outputs; local sources record hashes.
+    """
+    local_dir = Path(dataset_dir).expanduser().resolve() if dataset_dir else None
+    selected = list(dict.fromkeys(LANGUAGE_ALIASES.get(lang, lang) for lang in (languages or DEFAULT_LANGUAGES)))
+    if languages == []:
+        raise ValueError("Select at least one language")
+    if invalid := set(selected) - LANGUAGES.keys():
+        raise ValueError(f"Unsupported languages: {sorted(invalid)}. Supported: {list(LANGUAGES)}")
+
+    source_path = (
+        local_dir / "test.parquet"
+        if local_dir
+        else Path(hf_hub_download(HF_DATASET, "test.parquet", repo_type="dataset", revision=HF_REVISION))
+    )
+    if local_dir and not source_path.exists():
+        upstream, translations, provenance = _load_language_files(local_dir, selected, upstream_file)
+    else:
+        source_hash = _checksum(source_path)
+        if local_dir is None and source_hash != HF_SHA256:
+            raise ValueError("Indic parquet checksum does not match the pinned source")
+        upstream = _index_parquet(source_path)
+        translations = {
+            lang: {
+                row_id: {
+                    "row_id": row_id,
+                    "row_index": index,
+                    "language": LANGUAGES[lang],
+                    "input": _text(
+                        row, "input" if lang == "en" else f"input_{LANGUAGES[lang]}_translation", f"({lang}, {row_id})"
+                    ),
+                }
+                for index, (row_id, row) in enumerate(upstream.items())
+            }
+            for lang in selected
+        }
+        provenance = {
+            "source_layout": "translation_columns",
+            "indic_revision": HF_REVISION if source_hash == HF_SHA256 else None,
+            "source_files": {"dataset": {"path": str(source_path), "sha256": source_hash}},
+        }
+
+    entries, smoke = [], []
+    for language, local in translations.items():
         translated = [
             _format_entry(row=row, source=upstream[row_id], language=language) for row_id, row in local.items()
         ]
@@ -185,13 +253,8 @@ def prepare(
     _write_jsonl(Path(example_file).expanduser().resolve() if example_file else EXAMPLE_FPATH, smoke[:5])
     manifest = {
         "indic_dataset": HF_DATASET,
-        "indic_revision": HF_REVISION if local_dir is None else None,
         "indic_dataset_dir": str(local_dir) if local_dir else None,
-        "english_source_sha256": _checksum(paths["en"]),
-        "upstream_dataset": UPSTREAM_DATASET,
-        "upstream_revision": UPSTREAM_REVISION if upstream_hash == UPSTREAM_SHA256 else None,
-        "upstream_sha256": upstream_hash,
-        "upstream_file": str(upstream_path),
+        **provenance,
         "rubric_language": "en",
         "reference_answer_language": "en",
         "system_prompt_language": "en",
@@ -200,7 +263,6 @@ def prepare(
         "aggregate_rows": sum(bool(row["include_in_aggregate"]) for row in entries),
         "rows_by_language": dict(Counter(str(row["language"]) for row in entries)),
         "rows_by_capability": dict(Counter(str(row["capability"]) for row in entries)),
-        "source_files": {lang: {"path": str(path), "sha256": _checksum(path)} for lang, path in paths.items()},
         "output_file": str(output),
         "output_sha256": _checksum(output),
         "aggregate_exclusions": {"task": ["moral_belief"], "capability": ["multilingual"]},
@@ -213,11 +275,12 @@ def prepare(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--dataset-dir", help="Local data/<language>/test.parquet files; default: pinned Hugging Face data."
+        "--dataset-dir",
+        help="Directory containing test.parquet or data/<language>/test.parquet; default: pinned Hub data.",
     )
     parser.add_argument("--languages", nargs="+", help="Default: 12 Indic languages; ka/mar/mal alias kn/mr/ml.")
     parser.add_argument(
-        "--upstream-file", help="Local upstream parquet; use with --dataset-dir for offline preparation."
+        "--upstream-file", help="Original rubrics for per-language local exports; not needed with public test.parquet."
     )
     parser.add_argument("--output-file", help="Override the prepared benchmark JSONL path.")
     parser.add_argument("--example-file", help="Override the small resources-server example JSONL path.")

@@ -1,47 +1,66 @@
-# BigGenBench rubric verifier
+# BiGGenBench rubric verifier
 
-Absolute 1–5 ratings with an instance-specific rubric and reference answer;
-Gym reward is `(score - 1) / 4`. Uses Gym's judge client, model-server concurrency,
-failure routing, and aggregation. Invalid verdicts are masked from quality metrics.
+Scores a completed response from 1 to 5 against an instance-specific rubric and
+reference answer. Gym reward is `(score - 1) / 4`.
 
-## Component contract
+## What it does
 
-[`app.py`](app.py) extends `SimpleResourcesServer`. The async `verify()` method
-accepts a Gym response and task metadata described by [`TaskData`](task_data.py):
-task ID, language, capability, task name, original system prompt, user input,
-reference answer, and descriptions for scores 1–5. The reference and rubric
-belong in `verifier_metadata`; they are not candidate-model input.
+[`app.py`](app.py) extends `SimpleResourcesServer`. It extracts the final
+assistant answer, renders [`prompts/absolute.yaml`](prompts/absolute.yaml) with
+Gym's `load_prompt_config` and `fill_prompt`, and sends the request through
+`call_judge` to a configured Gym model server. The judge returns feedback ending
+in exactly one `[RESULT] N`, where `N` is an integer from 1 to 5.
 
-The verifier extracts final assistant text, excluding reasoning and commentary,
-then renders [`prompts/absolute.yaml`](prompts/absolute.yaml) with Gym's
-`load_prompt_config` and `fill_prompt`. `call_judge` sends the request through a
-configured Gym model server. The judge must finish normally and end its feedback
-with exactly one `[RESULT] N`, where `N` is an integer from 1 to 5.
+The verifier preserves `score`, `reward`, judge feedback, finish reason, and error
+diagnostics. It excludes reasoning/commentary from the graded answer. Empty
+answers receive score 1 without a judge call; malformed or truncated verdicts
+are masked. Transport/schema errors use the base server's `judge_failsafe` and
+Gym's retryable failure sidecar. Reverification is stateless and clears prior
+result fields.
 
-The response preserves the raw score, normalized reward, judge feedback, finish
-reason, and error diagnostics. Empty candidate answers receive score 1 without a
-judge call. Malformed or truncated judgments are masked; transport/schema errors
-propagate to the base server's `judge_failsafe` and Gym's retryable failure sidecar.
-`REVERIFY_MODE` is `STATELESS`, and repeated verification clears stale result fields.
+## Data format
 
-[`metrics.py`](metrics.py) supplies benchmark-specific scoring through Gym's
-aggregation hooks. It weights capabilities equally within each language and then
-weights languages equally, while retaining coverage and failure counts.
+The candidate receives `responses_create_params.input`. The separate
+`verifier_metadata` follows [`TaskData`](task_data.py):
 
-## Reuse and configuration
+| Field | Meaning |
+| --- | --- |
+| `id`, `language`, `capability`, `task` | Instance identity and metric groups. |
+| `input`, `system_prompt` | User question and original system instruction. |
+| `reference_answer` | Reference used only by the judge. |
+| `score_rubric` | `criteria` and `score1_description` through `score5_description`. |
 
-[`configs/biggenbench.yaml`](configs/biggenbench.yaml) composes the verifier with
-Gym's `simple_agent`, `legacy_agent` compatibility environment adapter, and
-`openai_model` judge. Select a policy model through the usual Gym model config and
-provide `judge_base_url`, `judge_api_key`, and `judge_model_name` at launch.
-`judge_prompt_path` and `judge_chat_completions_create_params` configure the prompt
-and judge generation. Dataset-specific paths and judge selection are supplied by
-the benchmark config, so the verifier can also score other correctly prepared
-BiGGen Bench datasets.
+The [Indic benchmark](../../benchmarks/indic/biggenbench/README.md) prepares this
+format from `ai4bharat/indic-biggenbench`.
 
-Tests cover rubric rendering, answer extraction, score parsing, failures,
-reverification, and aggregation. `VERIFIER_FIXTURE` provides full-reward,
-zero-reward, and malformed-verdict cases for Gym's manifest validation workflow.
+## Configuring the judge
 
-See [Indic BigGenBench](../../benchmarks/indic/biggenbench/README.md) for dataset
-preparation, language aliases, model settings, scoring, and Gym evaluation commands.
+[`configs/biggenbench.yaml`](configs/biggenbench.yaml) composes this verifier
+with Gym's `simple_agent`, `legacy_agent` environment adapter, and a dedicated
+`biggenbench_judge_model` instance of `openai_model`. Supply an OpenAI-compatible
+judge endpoint and model:
+
+```bash
+export BIGGENBENCH_JUDGE_BASE_URL=https://your-judge.example/v1
+export BIGGENBENCH_JUDGE_MODEL=your-judge-model
+read -rsp 'Judge API key: ' BIGGENBENCH_JUDGE_API_KEY
+export BIGGENBENCH_JUDGE_API_KEY
+```
+
+These variables configure only `biggenbench_judge_model`. The candidate uses the
+usual Gym policy model configuration. The judge defaults to temperature `0.0`,
+`max_tokens: 16384`, `reasoning_effort: low`, and eight concurrent requests.
+Override `judge_prompt_path` or `judge_chat_completions_create_params` under
+`biggenbench.resources_servers.biggenbench` to configure the prompt or provider
+parameters.
+
+## Metrics
+
+[`metrics.py`](metrics.py) implements Gym aggregation hooks. The headline score
+weights capabilities equally within each language, then weights languages
+equally. It excludes `moral_belief` and `multilingual` from that score while
+retaining separate all-task, micro, language, capability, task, and coverage
+metrics. Invalid judgments do not contribute to quality metrics.
+
+See the [benchmark usage guide](../../benchmarks/indic/biggenbench/usage.md) for
+preparation, candidate settings, evaluation commands, and output artifacts.

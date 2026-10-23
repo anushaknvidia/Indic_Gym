@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Native Gym Slurm recipe. Cluster paths and runtimes are supplied by the caller.
+# Gym Slurm recipe. Cluster paths, judge endpoint, and runtimes are supplied by the caller.
 compute:
   cluster:
     type: slurm
@@ -45,7 +45,9 @@ driver:
     ref: indic/biggenbench
   mounts: ["${oc.env:BIGGEN_SHARED_ROOT}"]
   env:
-    NVIDIA_API_KEY: runtime:NVIDIA_API_KEY
+    BIGGENBENCH_JUDGE_BASE_URL: runtime:BIGGENBENCH_JUDGE_BASE_URL
+    BIGGENBENCH_JUDGE_API_KEY: runtime:BIGGENBENCH_JUDGE_API_KEY
+    BIGGENBENCH_JUDGE_MODEL: runtime:BIGGENBENCH_JUDGE_MODEL
     RAY_TMPDIR: lit:/tmp
     OMP_NUM_THREADS: "lit:1"
   benchmarks:
@@ -59,8 +61,6 @@ driver:
         split: validation
         num_samples_in_parallel: 2
         responses_create_params: {temperature: 1.0, top_p: 0.95, max_output_tokens: 32768}
-        judge_base_url: https://inference-api.nvidia.com/v1
-        judge_model_name: gcp/google/gemini-3.8-flash
         policy_model:
           responses_api_models:
             vllm_model:

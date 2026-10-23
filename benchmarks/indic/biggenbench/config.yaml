@@ -3,10 +3,6 @@
 config_paths:
   - resources_servers/biggenbench/configs/biggenbench.yaml
 
-judge_base_url: https://inference-api.nvidia.com/v1
-judge_api_key: ${oc.env:NVIDIA_API_KEY,null}
-judge_model_name: gcp/google/gemini-3.8-flash
-
 biggenbench_simple_agent:
   responses_api_agents:
     simple_agent:
@@ -15,6 +11,7 @@ biggenbench_simple_agent:
           type: benchmark
           jsonl_fpath: benchmarks/indic/biggenbench/data/indic_biggenbench_benchmark.jsonl
           prepare_script: benchmarks/indic/biggenbench/prepare.py
+          prepare_dependencies: [pyarrow, "huggingface-hub<2"]
           license: CC BY-SA 4.0
           num_repeats: 1
         - name: smoke
